@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Оценка образа жизни</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="public/favicon.ico" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- <img src="public/logo2.svg" alt="Logo" style="position: absolute; top: 5px; left: 20px;"> -->
+        <h1 id="title"></h1>
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Загрузка анкеты...</p>
+        </div>
+        <div id="error-message" class="error-message" style="display: none;">
+            <p>Произошла ошибка при загрузке анкеты. Пожалуйста, попробуйте позже.</p>
+            <button id="retry-button">Попробовать снова</button>
+        </div>
+        <form id="questionnaireForm" style="display: none;"></form>
+        <p style="text-align: center; font-size: 15px; color: #888; margin-top: 20px;">Республиканский медицинский информационно-аналитический центр Министерства здравоохранения Удмуртской Республики, 2025</p>
+    </div>
+    
+    <!-- Анимация успешной отправки -->
+    <div id="success-animation" class="success-animation">
+        <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
+            <circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none" />
+            <path class="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
+        </svg>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>

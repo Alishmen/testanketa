@@ -6,6 +6,19 @@ let questionnaireData = {
     "questionnaire": []
 };
 
+// Загружаем конфигурацию
+const config = window.questionnaireConfig || {
+    API_BASE_URL: 'http://localhost:5000/api',
+    TELEGRAM_BOT_URL: 'https://t.me/HealthMonitoringUR_bot'
+};
+
+// Состояние верификации
+let patientVerificationStatus = {
+    verified: false,
+    patientId: null,
+    phone: null
+};
+
 /**
  * Показывает элемент загрузки
  */
@@ -86,6 +99,17 @@ function createInputElement(question) {
     input.placeholder = `Пример: ${question.example}`;
     input.dataset.questionId = question.question;
     input.required = true; // Делаем все поля обязательными
+    
+    // Устанавливаем вчерашнюю дату для поля даты по умолчанию
+    if (question.type === 'date' && question.question === 'Дата заполнения анкеты:') {
+        const today = new Date();
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1); // Вычитаем один день
+        const yyyy = yesterday.getFullYear();
+        const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+        const dd = String(yesterday.getDate()).padStart(2, '0');
+        input.value = `${yyyy}-${mm}-${dd}`;
+    }
     
     // Добавляем анимацию при фокусе
     input.addEventListener('focus', function() {
@@ -267,89 +291,198 @@ function animateFormElements() {
 }
 
 /**
- * Собирает и отправляет данные формы
- * @param {Event} e - Событие отправки формы
+ * Проверяет статус верификации пациента
  */
-function handleFormSubmit(e) {
+async function checkPatientVerification() {
+    try {
+        // Получаем номер телефона из URL параметров или localStorage
+        const urlParams = new URLSearchParams(window.location.search);
+        const phone = urlParams.get('phone') || localStorage.getItem('patientPhone');
+        
+        if (!phone) {
+            showVerificationRequired('Номер телефона не найден');
+            return false;
+        }
+
+        // Проверяем статус верификации через API
+        const response = await fetch(`${config.API_BASE_URL}/patients/verify-status`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ phone })
+        });
+
+        if (!response.ok) {
+            throw new Error('Ошибка проверки статуса');
+        }
+
+        const data = await response.json();
+        
+        if (data.success && data.data.verified) {
+            patientVerificationStatus = {
+                verified: true,
+                patientId: data.data.patientId,
+                phone: phone
+            };
+            return true;
+        } else {
+            showVerificationRequired('Требуется подтверждение данных');
+            return false;
+        }
+    } catch (error) {
+        console.error('Ошибка проверки верификации:', error);
+        showVerificationRequired('Ошибка проверки статуса');
+        return false;
+    }
+}
+
+/**
+ * Показывает блок с требованием верификации
+ */
+function showVerificationRequired(message) {
+    const loadingElement = document.getElementById('loading');
+    const errorElement = document.getElementById('error-message');
+    const formElement = document.getElementById('questionnaireForm');
+    
+    // Скрываем все элементы
+    if (loadingElement) loadingElement.style.display = 'none';
+    if (errorElement) errorElement.style.display = 'none';
+    if (formElement) formElement.style.display = 'none';
+    
+    // Создаем или обновляем блок верификации
+    let verificationBlock = document.getElementById('verification-required');
+    if (!verificationBlock) {
+        verificationBlock = document.createElement('div');
+        verificationBlock.id = 'verification-required';
+        verificationBlock.className = 'verification-block';
+        document.querySelector('.container').appendChild(verificationBlock);
+    }
+    
+    verificationBlock.innerHTML = `
+        <div class="verification-content">
+            <div class="verification-icon">🔒</div>
+            <h2>Требуется подтверждение данных</h2>
+            <p>${message}</p>
+            <p>Для заполнения анкеты необходимо подтвердить ваши данные через Telegram</p>
+            <div class="verification-actions">
+                <a href="${config.TELEGRAM_BOT_URL}" class="btn btn-primary" target="_blank">
+                    Подтвердить через Telegram
+                </a>
+                <button onclick="retryVerification()" class="btn btn-secondary">
+                    Проверить снова
+                </button>
+            </div>
+            <div class="verification-info">
+                <p><strong>Как это работает:</strong></p>
+                <ol>
+                    <li>Нажмите "Подтвердить через Telegram"</li>
+                    <li>Согласитесь с политикой конфиденциальности</li>
+                    <li>Поделитесь своим номером телефона</li>
+                    <li>Вернитесь на эту страницу и нажмите "Проверить снова"</li>
+                </ol>
+            </div>
+        </div>
+    `;
+    
+    verificationBlock.style.display = 'block';
+}
+
+/**
+ * Повторная проверка верификации
+ */
+async function retryVerification() {
+    const verified = await checkPatientVerification();
+    if (verified) {
+        // Скрываем блок верификации и загружаем анкету
+        const verificationBlock = document.getElementById('verification-required');
+        if (verificationBlock) {
+            verificationBlock.style.display = 'none';
+        }
+        await initApp();
+    }
+}
+
+/**
+ * Отправляет данные анкеты в analiz-system
+ */
+async function submitToAnalizSystem(formData) {
+    try {
+        const response = await fetch(`${config.API_BASE_URL}/medical-data`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                patientId: patientVerificationStatus.patientId,
+                questionnaireData: formData,
+                timestamp: new Date().toISOString()
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Ошибка отправки данных');
+        }
+
+        const result = await response.json();
+        return result.success;
+    } catch (error) {
+        console.error('Ошибка отправки в analiz-system:', error);
+        return false;
+    }
+}
+
+/**
+ * Обработчик отправки формы
+ */
+async function handleFormSubmit(e) {
     e.preventDefault();
     
-    const formData = {};
-    const inputs = this.querySelectorAll('input, textarea');
-    let isValid = true;
-    
-    // Проверяем каждое поле на валидность
-    inputs.forEach(input => {
-        validateField(input);
-        if (!input.validity.valid) {
-            isValid = false;
-        }
-    });
-    
-    // Если форма не валидна, прекращаем отправку
-    if (!isValid) {
-        // Прокручиваем к первому невалидному полю
-        const firstInvalid = this.querySelector('input:invalid, textarea:invalid');
-        if (firstInvalid) {
-            firstInvalid.focus();
-            firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+    // Проверяем верификацию перед отправкой
+    if (!patientVerificationStatus.verified) {
+        alert('Требуется подтверждение данных для отправки анкеты');
         return;
     }
+
+    const formData = new FormData(e.target);
+    const data = {};
     
-    // Анимация загрузки при отправке
-    const submitBtn = this.querySelector('button[type="submit"]');
-    if (submitBtn) {
-        submitBtn.textContent = 'Отправка...';
-        submitBtn.disabled = true;
+    // Собираем данные формы
+    for (let [key, value] of formData.entries()) {
+        data[key] = value;
     }
-    
-    // Собираем данные
-    inputs.forEach(input => {
-        // Используем data-атрибут для связи с вопросом
-        const question = input.dataset.questionId;
-        formData[question] = input.value;
-    });
+
+    // Показываем анимацию загрузки
+    const submitButton = e.target.querySelector('button[type="submit"]');
+    const originalText = submitButton.textContent;
+    submitButton.textContent = 'Отправка...';
+    submitButton.disabled = true;
 
     try {
-        // Отправка данных
-        console.log('Отправленные данные:', formData);
+        // Отправляем в analiz-system
+        const analizSuccess = await submitToAnalizSystem(data);
         
-        // Показываем анимацию успешной отправки
-        showSuccessAnimation();
-        
-        // Проверяем доступность Telegram WebApp API
-        if (window.Telegram?.WebApp) {
-            Telegram.WebApp.sendData(JSON.stringify(formData));
-        } else {
-            // Запасной вариант, если API Telegram недоступен
+        if (analizSuccess) {
+            // Показываем анимацию успеха
+            showSuccessAnimation();
+            
+            // Очищаем форму
+            e.target.reset();
+            
+            // Показываем сообщение об успехе
             setTimeout(() => {
-                alert('Данные успешно отправлены!');
-                
-                // Сбрасываем форму после успешной отправки
-                this.reset();
-                
-                // Восстанавливаем кнопку
-                if (submitBtn) {
-                    submitBtn.textContent = 'Отправить анкету';
-                    submitBtn.disabled = false;
-                }
+                alert('Анкета успешно отправлена! Данные сохранены в системе.');
             }, 2000);
+        } else {
+            throw new Error('Ошибка отправки в analiz-system');
         }
-        
-        // Анимация успешной отправки
-        this.classList.add('submitted');
-        setTimeout(() => {
-            this.classList.remove('submitted');
-        }, 300);
     } catch (error) {
-        console.error('Ошибка при отправке данных:', error);
-        alert('Произошла ошибка при отправке формы. Пожалуйста, попробуйте еще раз.');
-        
+        console.error('Ошибка отправки формы:', error);
+        alert('Произошла ошибка при отправке анкеты. Попробуйте позже.');
+    } finally {
         // Восстанавливаем кнопку
-        if (submitBtn) {
-            submitBtn.textContent = 'Отправить анкету';
-            submitBtn.disabled = false;
-        }
+        submitButton.textContent = originalText;
+        submitButton.disabled = false;
     }
 }
 
@@ -358,11 +491,27 @@ function handleFormSubmit(e) {
  */
 async function initApp() {
     try {
+        // Сначала проверяем верификацию
+        const verified = await checkPatientVerification();
+        
+        if (!verified) {
+            return; // Останавливаем инициализацию, показывается блок верификации
+        }
+
+        // Если верифицирован, загружаем анкету
         await loadQuestionnaireData();
         generateForm();
         animateFormElements();
+        
+        // Добавляем обработчик отправки
+        const form = document.getElementById('questionnaireForm');
+        if (form) {
+            form.addEventListener('submit', handleFormSubmit);
+        }
+        
     } catch (error) {
-        console.error('Ошибка при инициализации приложения:', error);
+        console.error('Ошибка инициализации:', error);
+        showError();
     }
 }
 
